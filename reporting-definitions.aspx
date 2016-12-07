@@ -11,6 +11,7 @@
 <%@ Import Namespace="Sitecore.StringExtensions" %>
 <%@ Import Namespace="Sitecore.Xdb.Configuration" %>
 <%-- xDB Marketing sub-system dependencies ( campaigns, goals, marketing assets, outomes definitions ) --%>
+<%@ Import Namespace="Sitecore.Marketing.Core" %>
 <%@ Import Namespace="Sitecore.Marketing.Definitions" %>
 <%@ Import Namespace="Sitecore.Marketing.Definitions.Goals" %>
 <%@ Import Namespace="Sitecore.Marketing.Definitions.Campaigns" %>
@@ -56,11 +57,35 @@
     public IDefinitionManager<T> ReportingDefinitionManager { get; private set; }
 
     public void VerifyDeployment() {
-      var scDefCount = SitecoreDefinitionManager.GetAll<T>(CultureInfo.InvariantCulture).Count();
-      Trace.Info("MarketingDefinitoinsDiagnosticProcessor&lt;{0}&gt; fetched sitecore definitions [{1}]".FormatWith(typeof(T).Name, scDefCount));
-      var rpDefCount = ReportingDefinitionManager.GetAll<T>(CultureInfo.InvariantCulture).Count();
-      Trace.Info("MarketingDefinitoinsDiagnosticProcessor&lt;{0}&gt; fetched reporting definitions [{1}]".FormatWith(typeof(T).Name, rpDefCount));
+      Trace.UserMessage("&lt;{0}&gt; : verifying all definitions present in reporting database".FormatWith(typeof(T).Name));
+      var sitecoreDefinitionList = SitecoreDefinitionManager.GetAll<T>(CultureInfo.InvariantCulture);
+      var rdbDefinitionList = ReportingDefinitionManager.GetAll<T>(CultureInfo.InvariantCulture);
+
+      var clicker = new Clicker();
+      foreach (var scDefinition in sitecoreDefinitionList)
+      {
+        clicker.Click();
+        if (!rdbDefinitionList.Any(def => def.Data.Id == scDefinition.Data.Id))
+        {
+          Trace.Err("&lt;{0}&gt;; ID:'{1}'; Name:'{2}'; Status:'Definition present in Sitecore but not present in reporting database'".FormatWith(typeof(T).Name, scDefinition.Data.Id, scDefinition.Data.Name));
+          clicker.Err();
+        }
+      }
+      Trace.Clicker(clicker);
+
+      Trace.UserMessage("&lt;{0}&gt; : verifying reporting does not contain extra definitions".FormatWith(typeof(T).Name));
+      var extraDefinitionsClicker = new Clicker();
+      foreach (var rdbDefinition in rdbDefinitionList) {
+        extraDefinitionsClicker.Click();
+        if (!sitecoreDefinitionList.Any(def => def.Data.Id == rdbDefinition.Data.Id)) {
+          Trace.Err("&lt;{0}&gt;; ID:'{1}'; Name:'{2}'; Status:'Definition is only present in reporting database'".FormatWith(typeof(T).Name, rdbDefinition.Data.Id, rdbDefinition.Data.Name));
+          extraDefinitionsClicker.Err();
+        }
+      }
+      Trace.Clicker(extraDefinitionsClicker);
+
     }
+
   }
 
   public class MarketingTaxonomyDiagnosticProcessor:IDiagnosticProcessor
@@ -83,7 +108,7 @@
 
       var rdbTaxonomyProvider = Sitecore.Configuration.Factory.CreateObject<RdbTaxonomyRepository>(Sitecore.Configuration.Factory.GetConfigNode(Const.Taxonomy.RdbProviderConfigPath));
       Assert.IsNotNull(rdbTaxonomyProvider, "rdbTaxonomyProvider is NULL [failed to fetch from configuration by xpath: '{0}']".FormatWith(Const.Taxonomy.RdbProviderConfigPath));
-      Trace.Info("Started verification of taxonomy definitions deployment...");
+      Trace.UserMessage("Verifying that taxonomy definitions have been deployed to reporting database");
       var clicker = new Clicker();
       //Groupping taxonomy definitions by taxonomy IDs. Each group will contain culture variations for the same taxonomy
       foreach ( var scTaxonomyDefinitionGroup in scTaxonomyDefinitions.GroupBy( taxonomy => taxonomy.TaxonomyId))
@@ -93,8 +118,10 @@
           VerifyTaxonomyAgainstScDefinition(scCultureSpecificTaxonomy, rdbCultureSpecificTaxonomy, clicker);
         }
       }
-      Trace.Info("DONE [verification of taxonomy definitions deployment]");
       Trace.Clicker(clicker);
+
+      Trace.UserMessage("Verifying that there are no extra definitions in reporting database");
+      Trace.Warn("Not supported due to provider limitations");
     }
 
     public void VerifyTaxonomyAgainstScDefinition(TaxonEntity scTaxonomyEntity, TaxonEntity rdbTaxonomyEntity, Clicker clicker)
@@ -152,30 +179,39 @@
 
     public void VerifyDeployment() {
       dynamic rdbSegmentReader = Sitecore.Configuration.Factory.CreateObject(Const.ExperienceAnalytics.RdbAggregationSegmentReaderConfig, true);
-      Trace.Warn("RDB segment definitions");
       Type rdbSegmentReaderType = rdbSegmentReader.GetType();
       var rdbSegmentReaderGetAll = rdbSegmentReaderType.GetMethod("GetAll", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-      IEnumerable<IAggregationSegment> result = rdbSegmentReaderGetAll.Invoke(rdbSegmentReader, new object[] { true });
-
-      var rdbSegmentClicker = new Clicker();
-      foreach (var entry in result) {
-        Trace.Info("SegmentID: {0}; DeployDate: {1}".FormatWith(entry.SegmentId, entry.DeployDate.ToString()));
-        rdbSegmentClicker.Click();
-      }
-      Trace.Clicker(rdbSegmentClicker);
+      IEnumerable<IAggregationSegment> rdbSegmentDefinitionList = rdbSegmentReaderGetAll.Invoke(rdbSegmentReader, new object[] { true });
 
       dynamic scSegmentReader = Sitecore.Configuration.Factory.CreateObject(Const.ExperienceAnalytics.ScSegmentReader, true);
-      Trace.Warn("Sitecore segment definitions");
       Type scSegmentReaderType = scSegmentReader.GetType();
       var scSegmentReadereGetAll = scSegmentReaderType.GetMethod("GetAll", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-      IEnumerable<SegmentDefinition> scResult = scSegmentReadereGetAll.Invoke(scSegmentReader, null);
-      var scSegmentClicker = new Clicker();
-      foreach (var entry in scResult)
-      {
-        Trace.Info("SegmentID: {0}; DeployDate: {1}; Title: {2}".FormatWith(entry.Id, entry.DeployDate.ToString(), entry.Title));
-        scSegmentClicker.Click();
+      IEnumerable<SegmentDefinition> scSegmentDefinitionList = scSegmentReadereGetAll.Invoke(scSegmentReader, null);
+
+      Trace.UserMessage("Verifying that segment definitions have been deployed to reporting database");
+      var clicker = new Clicker();
+      foreach (var scDefinition in scSegmentDefinitionList) {
+        clicker.Click();
+        if (!rdbSegmentDefinitionList.Any(def => def.SegmentId == scDefinition.Id)) {
+          Trace.Err("Segment ID: {0};Segment Title: {1}; Status: Present in Sitecore but not present in the reporting database".FormatWith(scDefinition.Id, scDefinition.Title));
+          clicker.Err();
+        }
       }
-      Trace.Clicker(scSegmentClicker);
+      Trace.Clicker(clicker);
+
+      Trace.UserMessage("Verifying that there are no extra definitions in reporting database");
+      var rdbclicker = new Clicker();
+      foreach (var rdbDefinition in rdbSegmentDefinitionList)
+      {
+        rdbclicker.Click();
+        if (!scSegmentDefinitionList.Any(def => def.Id == rdbDefinition.SegmentId))
+        {
+          Trace.Err("Segment ID: {0}; Status: Present in reporting database but NOT present in Sitecore".FormatWith(rdbDefinition.SegmentId));
+          rdbclicker.Err();
+        }
+      }
+      Trace.Clicker(rdbclicker);
+
     }
   }
 
@@ -357,6 +393,11 @@
     public static void Err(string msg)
     {
       HttpContext.Current.Response.Write(Format(msg, "red"));
+    }
+
+    public static void UserMessage(string msg)
+    {
+      HttpContext.Current.Response.Write("<div style='background-color:gray;color:white;font-weight:bold;'><pre><code>&nbsp;{0}</code></pre></div>".FormatWith(msg));
     }
 
     public static void Clicker(Clicker clicker)
